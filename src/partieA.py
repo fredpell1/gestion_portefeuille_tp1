@@ -1,4 +1,6 @@
 import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
 from statsmodels.stats.correlation_tools import cov_nearest
 
 
@@ -18,6 +20,33 @@ def compute_sigma(data: pd.DataFrame):
     sigma_df = pd.DataFrame(sigma, index=data.columns, columns=data.columns)
     return sigma_df
 
+
+def efficient_frontier_closed_form(returns: pd.DataFrame, sigma: pd.DataFrame, n_ptf = 100):
+    inv_sigma = np.linalg.inv(sigma.values)
+    ones = np.ones((len(sigma), 1))
+    mu = returns.mean().values.reshape(-1, 1)
+
+    A = ones.T @ inv_sigma @ ones
+    B = ones.T @ inv_sigma @ mu
+    C = mu.T @ inv_sigma @ mu
+    D = A * C - B ** 2
+
+    target_returns = np.linspace(returns.min().min(), returns.max().max(), n_ptf)
+    weights_list = []
+    variances = []
+
+    for r in target_returns:
+        lambda_ = (C - B * r) / D
+        gamma_ = (A * r - B) / D
+        weights = inv_sigma @ (lambda_ * ones + gamma_ * mu)
+        weights_list.append(weights.flatten())
+        variances.append(
+            ((A*r**2-2*B*r+C) / D)[0]
+        )
+
+    weights_df = pd.DataFrame(weights_list, columns=returns.columns)
+    return weights_df, variances,target_returns
+
 def main():
     data = load_data('data/48_Industry_Portfolios.csv')
     print(data.head())
@@ -26,7 +55,11 @@ def main():
     print(data_last_five_years.head())
     sigma = compute_sigma(data_last_five_years)
     print(sigma)
+    weights,variances,returns = efficient_frontier_closed_form(data_last_five_years,sigma)
+    print(variances[0],returns[0])
 
+    plt.plot(variances,returns)
+    plt.show()
 
 if __name__ == "__main__":
     main()
