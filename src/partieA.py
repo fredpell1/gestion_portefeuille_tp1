@@ -50,7 +50,7 @@ def efficient_frontier_closed_form(returns: pd.DataFrame, sigma: pd.DataFrame, n
 def main():
     data = load_data('data/48_Industry_Portfolios.csv')
     print(data.head())
-    industries = ['Food', 'Soda', 'Beer', 'Smoke', 'Toys', 'Fun']
+    industries = ['Food', 'Soda', 'Beer', 'Smoke', 'Fin', 'Books']
     data_last_five_years = extract_last_five_years(data, industries)
     print(data_last_five_years.head())
     sigma = compute_sigma(data_last_five_years)
@@ -58,7 +58,13 @@ def main():
     weights,variances,returns = efficient_frontier_closed_form(data_last_five_years,sigma)
     print(variances[0],returns[0])
 
-    plt.plot(variances,returns)
+    data_last_five_years.plot(title="Monthly Returns (Last Five Years)")
+    plt.xlabel("Date")
+    plt.ylabel("Return")
+    plt.show()
+
+
+    plt.plot(np.sqrt(variances),returns)
     plt.show()
 
 if __name__ == "__main__":
