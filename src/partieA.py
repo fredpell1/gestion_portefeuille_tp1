@@ -42,12 +42,11 @@ def efficient_frontier_closed_form(returns: pd.DataFrame, sigma: pd.DataFrame, n
         weights = inv_sigma @ (lambda_ * ones + gamma_ * mu)
         weights_list.append(weights.flatten())
         variances.append(
-            ((A*r**2-2*B*r+C) / D)[0]
+            ((A*r**2-2*B*r+C) / D)[0] 
         )
 
     weights_df = pd.DataFrame(weights_list, columns=returns.columns)
-    return weights_df, variances, target_returns, mu.flatten()
-
+    return weights_df, variances,target_returns,mu.flatten()
 
 
 def mean_variance_locus_with_rfr_notes(returns: pd.DataFrame, sigma: pd.DataFrame,
