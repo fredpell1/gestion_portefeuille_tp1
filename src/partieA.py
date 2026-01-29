@@ -13,6 +13,8 @@ def extract_last_five_years(data, industry):
     start_date = pd.to_numeric(f"{start_date.year}{start_date.month:02d}")
     return data.loc[start_date:end_date, industry]
 
+data = load_data('data/48_Industry_Portfolios.csv')
+
 def compute_sigma(data: pd.DataFrame):
     sigma = data.cov()
     sigma = cov_nearest(sigma, method='nearest')
@@ -105,7 +107,7 @@ def mean_variance_locus_with_rfr_notes(returns: pd.DataFrame, sigma: pd.DataFram
 def main():
     data = load_data('data/48_Industry_Portfolios.csv')
 
-    industries = ['Food', 'Soda', 'Beer', 'Smoke', 'Fin']
+    industries = ['Books', 'Soda', 'FabPr', 'Steel', 'Aero']
     data_last_five_years = extract_last_five_years(data, industries)
 
     sigma = compute_sigma(data_last_five_years)
@@ -114,7 +116,7 @@ def main():
         data_last_five_years, sigma, annualize=True
     )
 
-    R = 0
+    R = 2
     rf_res = mean_variance_locus_with_rfr_notes(
         data_last_five_years, sigma, n_ptf=250, R=R, annualize=True
     )
