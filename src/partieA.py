@@ -6,13 +6,16 @@ from scipy.optimize import minimize
 
 
 def load_data(file_path):
-    return pd.read_csv(file_path, parse_dates=['Date'], index_col='Date')
+    df = pd.read_csv(file_path)
+    df["Date"] = pd.to_datetime(df["Date"].astype(str), format="%Y%m")
+    df = df.set_index("Date")
+    df = df.replace(-99.99, np.nan).dropna()  # important for Soda early history
+    return df
 
-def extract_last_five_years(data, industry):
-    end_date = data.index[-1]
-    start_date = pd.to_datetime(end_date, format='%Y%m') - pd.DateOffset(years=5)
-    start_date = pd.to_numeric(f"{start_date.year}{start_date.month:02d}")
-    return data.loc[start_date:end_date, industry]
+def extract_last_five_years(data, industries):
+    end_date = data.index.max()
+    start_date = end_date - pd.DateOffset(years=5)
+    return data.loc[start_date:end_date, industries]
 
 def compute_sigma(data: pd.DataFrame):
     sigma = data.cov()
@@ -31,7 +34,7 @@ def efficient_frontier_closed_form(returns: pd.DataFrame, sigma: pd.DataFrame, n
     C = mu.T @ inv_sigma @ mu
     D = A * C - B ** 2
 
-    target_returns = np.linspace(mu.min(), mu.max()*2, n_ptf)
+    target_returns = np.linspace(mu.min(), mu.max(), n_ptf)
     weights_list = []
     variances = []
 
@@ -61,9 +64,9 @@ def mean_variance_locus_with_rfr_notes(returns: pd.DataFrame, sigma: pd.DataFram
     ones = np.ones((n, 1))
 
     
-    A = float(ones.T @ invSigma @ ones)
-    B = float(ones.T @ invSigma @ zbar)
-    C = float(zbar.T @ invSigma @ zbar)
+    A = (ones.T @ invSigma @ ones).item()
+    B = (ones.T @ invSigma @ zbar).item()
+    C = (zbar.T @ invSigma @ zbar).item()
 
     denom = C - 2 * R * B + (R ** 2) * A  
 
@@ -114,8 +117,9 @@ def efficient_frontier_numerical(returns: pd.DataFrame, sigma: pd.DataFrame, n_p
     time_factor = 12 if annualize else 1
     sigma_t = sigma.values*time_factor
     mu = returns.mean().values.reshape(-1, 1)*time_factor
-    
-    target_returns = np.linspace(mu.min(), mu.max()*2, n_ptf)
+    mu_assets = mu.flatten()
+
+    target_returns = np.linspace(mu_assets.min(), mu_assets.max(), n_ptf)
     def obj_fn(w):
         return 0.5 * w.T @ sigma_t @ w
     weights_list = []
@@ -164,9 +168,11 @@ def main():
 
 
     # print(weights_cf)
+    asset_sigmas = np.sqrt(np.diag(sigma.values * 12))
     for i, industry in enumerate(industries):
-        plt.plot(np.sqrt(np.diag(sigma*12)), mu_cf, 'o', label=industry)
-        plt.text(np.sqrt(np.diag(sigma))[i]*np.sqrt(12), mu_cf[i], industry)
+        plt.scatter(asset_sigmas[i], mu_cf[i])
+        plt.text(asset_sigmas[i], mu_cf[i], industry)
+
     plt.plot(np.sqrt(variances_cf), returns_cf, color='red', linewidth=2, label='Frontière efficiente (Avec Vente à découvert)')
 
     weights, variances, rets, mu = efficient_frontier_closed_form(
@@ -178,7 +184,6 @@ def main():
         data_last_five_years, sigma, n_ptf=250, R=R, annualize=True
     )
 
-    asset_sigmas = np.sqrt(np.diag(sigma.values * 12))
     plt.figure(figsize=(9, 6))
     plt.scatter(asset_sigmas, mu, marker='o')
     for i, ind in enumerate(industries):
@@ -202,8 +207,8 @@ def main():
     # print(np.sqrt(variances_num))
     # print(returns_num)
     for i, industry in enumerate(industries):
-        plt.plot(np.sqrt(np.diag(sigma*12)), mu_num, 'o', label=industry)
-        plt.text(np.sqrt(np.diag(sigma))[i]*np.sqrt(12), mu_num[i], industry)
+        plt.scatter(asset_sigmas[i], mu_cf[i])
+        plt.text(asset_sigmas[i], mu_cf[i], industry)
 
     plt.plot(np.sqrt(variances_num), returns_num, color='blue', linewidth=2,linestyle='--', label='Frontière efficiente (Sans Vente à découvert)')
     plt.xlabel('Risque (écart-type)')
