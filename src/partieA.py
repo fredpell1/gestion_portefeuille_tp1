@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 from statsmodels.stats.correlation_tools import cov_nearest
+from scipy.optimize import minimize
 
 
 def load_data(file_path):
@@ -40,7 +41,7 @@ def efficient_frontier_closed_form(returns: pd.DataFrame, sigma: pd.DataFrame, n
         weights = inv_sigma @ (lambda_ * ones + gamma_ * mu)
         weights_list.append(weights.flatten())
         variances.append(
-            ((A*r**2-2*B*r+C) / D)[0] 
+            ((A*r**2-2*B*r+C) / D)[0][0]
         )
 
     weights_df = pd.DataFrame(weights_list, columns=returns.columns)
@@ -101,6 +102,44 @@ def mean_variance_locus_with_rfr_notes(returns: pd.DataFrame, sigma: pd.DataFram
     }
 
 
+def efficient_frontier_numerical(returns: pd.DataFrame, sigma: pd.DataFrame, n_ptf = 100, annualize=True,short_selling=False):
+    """
+    min 1/2 w.T @ sigma @ w
+    s.t
+        mu.T @ w = r
+        ones.T @ w = 1
+        w >= 0
+    
+    """
+    time_factor = 12 if annualize else 1
+    sigma_t = sigma.values*time_factor
+    mu = returns.mean().values.reshape(-1, 1)*time_factor
+    
+    target_returns = np.linspace(mu.min(), mu.max()*2, n_ptf)
+    def obj_fn(w):
+        return 0.5 * w.T @ sigma_t @ w
+    weights_list = []
+    variances = []
+    for r in target_returns:
+        cons = (
+            {'type': 'eq', 'fun': lambda w: mu.T @ w - r},
+            {'type': 'eq', 'fun': lambda w: np.sum(w) - 1}
+        )
+        if not short_selling:
+            bounds = [(0, None) for _ in range(len(sigma))]
+        else:
+            bounds = [(-np.inf, np.inf) for _ in range(len(sigma))]
+        w0 = np.ones(len(sigma)) / len(sigma)
+        res = minimize(obj_fn, w0, constraints=cons, bounds=bounds)
+        if not res.success:
+            pass
+        weights_list.append(res.x)
+        variances.append(2*res.fun)
+
+    weights_df = pd.DataFrame(weights_list, columns=returns.columns)
+    return weights_df, variances,target_returns,mu.flatten()
+
+
 def main():
     data = load_data('data/48_Industry_Portfolios.csv')
 
@@ -108,6 +147,27 @@ def main():
     data_last_five_years = extract_last_five_years(data, industries)
 
     sigma = compute_sigma(data_last_five_years)
+    print(sigma)
+    weights_cf,variances_cf,returns_cf,mu_cf = efficient_frontier_closed_form(data_last_five_years,sigma,annualize=True)
+    weights_num,variances_num,returns_num,mu_num = efficient_frontier_numerical(data_last_five_years,sigma,annualize=True,short_selling=False)
+
+    print(f"Comparing mu_cf vs mu_num: {np.allclose(mu_cf, mu_num)}")
+    print(f"Comparing returns_cf vs returns_num: {np.allclose(returns_cf, returns_num)}")
+    print(f"Comparing variances_cf vs variances_num: {np.allclose(variances_cf, variances_num)}")
+    print(f"Comparing weights_cf vs weights_num: {np.allclose(weights_cf.values, weights_num.values, atol=1e-3, rtol=1e-3)}")
+
+
+    # for i,w in enumerate(zip(weights_cf.values, weights_num.values)):
+    #     w_cf, w_num = w
+    #     print(f"Weight mismatch for index {i}: {w_cf} vs {w_num}")
+    #     print(w_cf - w_num)
+
+
+    # print(weights_cf)
+    for i, industry in enumerate(industries):
+        plt.plot(np.sqrt(np.diag(sigma*12)), mu_cf, 'o', label=industry)
+        plt.text(np.sqrt(np.diag(sigma))[i]*np.sqrt(12), mu_cf[i], industry)
+    plt.plot(np.sqrt(variances_cf), returns_cf, color='red', linewidth=2, label='Frontière efficiente (Avec Vente à découvert)')
 
     weights, variances, rets, mu = efficient_frontier_closed_form(
         data_last_five_years, sigma, annualize=True
@@ -134,6 +194,20 @@ def main():
     plt.ylabel('Retour attendu')
     plt.title('Mean-Variance Locus: sans / avec actif sans risque')
     plt.grid(True)
+    plt.legend()
+    # print(np.sqrt(variances_cf))
+    # print(returns_cf)
+
+    # print(weights_num)
+    # print(np.sqrt(variances_num))
+    # print(returns_num)
+    for i, industry in enumerate(industries):
+        plt.plot(np.sqrt(np.diag(sigma*12)), mu_num, 'o', label=industry)
+        plt.text(np.sqrt(np.diag(sigma))[i]*np.sqrt(12), mu_num[i], industry)
+
+    plt.plot(np.sqrt(variances_num), returns_num, color='blue', linewidth=2,linestyle='--', label='Frontière efficiente (Sans Vente à découvert)')
+    plt.xlabel('Risque (écart-type)')
+
     plt.legend()
     plt.show()
 
