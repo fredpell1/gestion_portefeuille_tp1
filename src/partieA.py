@@ -143,6 +143,37 @@ def efficient_frontier_numerical(returns: pd.DataFrame, sigma: pd.DataFrame, n_p
     weights_df = pd.DataFrame(weights_list, columns=returns.columns)
     return weights_df, variances,target_returns,mu.flatten()
 
+def efficient_frontier_with_rfr_noshort(returns, sigma, R, n_ptf=100, annualize=True):
+    time_factor = 12 if annualize else 1
+    sigma_t = sigma.values * time_factor
+    mu = returns.mean().values.reshape(-1, 1) * time_factor
+    mu_assets = mu.flatten()
+
+    target_returns = np.linspace(mu_assets.min(), mu_assets.max(), n_ptf)
+
+    def obj_fn(w):
+        return 0.5 * w.T @ sigma_t @ w
+
+    weights_list = []
+    variances = []
+
+    for mu0 in target_returns:
+        cons = (
+            {'type': 'eq', 'fun': lambda w, mu0=mu0: (mu - R).T @ w - (mu0 - R)},
+            {'type': 'ineq', 'fun': lambda w: 1 - np.sum(w)}
+        )
+        bounds = [(0, None) for _ in range(len(sigma))]
+        w0 = np.ones(len(sigma)) / len(sigma)
+        res = minimize(obj_fn, w0, method='SLSQP', constraints=cons, bounds=bounds)
+        if not res.success:
+            continue
+        weights_list.append(res.x)
+        variances.append(2 * res.fun)
+
+    weights_df = pd.DataFrame(weights_list, columns=returns.columns)
+    return weights_df, variances, target_returns, mu.flatten()
+
+
 
 def main():
     data = load_data('data/48_Industry_Portfolios.csv')
@@ -213,6 +244,22 @@ def main():
     plt.plot(np.sqrt(variances_num), returns_num, color='blue', linewidth=2,linestyle='--', label='Frontière efficiente (Sans Vente à découvert)')
     plt.xlabel('Risque (écart-type)')
 
+    # =========================
+    # Q5 - Mean-Variance Locus (with risk-free asset, no short-selling)
+    # =========================
+    R = 0
+    weights_noshort, variances_noshort, rets_noshort, mu_noshort = efficient_frontier_with_rfr_noshort(
+    data_last_five_years, sigma, R, n_ptf=250, annualize=True
+)
+
+    sig_q5 = np.sqrt(np.array(variances_noshort))
+    mu_q5 = np.array(rets_noshort)[:len(sig_q5)]
+
+    plt.plot(sig_q5, mu_q5, linestyle='-.', linewidth=2,
+         label='Mean-Variance locus (Rf + no-short)')
+
+
+    
     plt.legend()
     plt.show()
 
