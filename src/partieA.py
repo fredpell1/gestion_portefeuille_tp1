@@ -1,7 +1,9 @@
+from networkx import sigma
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 from statsmodels.stats.correlation_tools import cov_nearest
+from scipy.optimize import minimize
 
 
 def load_data(file_path: str) -> pd.DataFrame:
@@ -105,7 +107,9 @@ def efficient_frontier_closed_form(
         gam = (A * r - B) / D
         weights = inv_sigma @ (lam * ones + gam * mu)
         weights_list.append(weights.flatten())
-        variances.append((A * r ** 2 - 2 * B * r + C) / D)
+        variances.append(
+            ((A*r**2-2*B*r+C) / D)[0][0]
+        )
 
     weights_df = pd.DataFrame(weights_list, columns=returns.columns)
     return weights_df, variances, target_returns, mu.flatten()
@@ -282,6 +286,54 @@ def main():
     plt.ylabel('Retour attendu')
     plt.title('Mean-Variance Locus: sans / avec actif sans risque')
     plt.grid(True)
+    plt.legend()
+    # print(np.sqrt(variances_cf))
+    # print(returns_cf)
+
+    # print(weights_num)
+    # print(np.sqrt(variances_num))
+    # print(returns_num)
+    for i, industry in enumerate(industries):
+        plt.scatter(asset_sigmas[i], mu_cf[i])
+        plt.text(asset_sigmas[i], mu_cf[i], industry)
+
+    plt.plot(np.sqrt(variances_num), returns_num, color='blue', linewidth=2,linestyle='--', label='Frontière efficiente (Sans Vente à découvert)')
+    plt.xlabel('Risque (écart-type)')
+
+    
+    # Q5 - Mean-Variance Locus (with risk-free asset, no short-selling)
+    R = 0
+    weights_noshort, variances_noshort, rets_noshort, mu_noshort = efficient_frontier_with_rfr_noshort(
+    data_last_five_years, sigma, R, n_ptf=250, annualize=True
+)
+
+    sig_q5 = np.sqrt(np.array(variances_noshort))
+    mu_q5 = np.array(rets_noshort)[:len(sig_q5)]
+
+    plt.plot(sig_q5, mu_q5, linestyle='-.', linewidth=2,
+         label='Mean-Variance locus (Rf + no-short)')
+
+    # Q6 - Tangency portfolio (Rf = 0, no short-selling)
+    R = 0.0
+    mu_assets = data_last_five_years.mean().values * 12
+    Sigma_assets = sigma.values * 12
+
+    w_star, mu_p, var_p, sharpe_p = tangency_portfolio_noshort(mu_assets, Sigma_assets, R)
+
+    print("\n================ Q6: Tangency (Rf=0, no-short) ================")
+    print("Poids du portefeuille tangent (long-only):")
+    for name, w in zip(industries, w_star):
+        print(f"  {name}: {w:.4f}")
+    print(f"Moyenne (mu_p): {mu_p:.6f}")
+    print(f"Variance (var_p): {var_p:.6f}")
+    print(f"Ecart-type (sigma_p): {np.sqrt(var_p):.6f}")
+    print(f"Sharpe (mu_p - R)/sigma_p: {sharpe_p:.6f}")
+
+    max_sharpe_rand, w_best_rand = verify_max_sharpe_random(mu_assets, Sigma_assets, R, n_random=20000, seed=0)
+    print(f"Max Sharpe (random long-only, n=20000): {max_sharpe_rand:.6f}")
+    print(f"Diff (tangency - random max): {sharpe_p - max_sharpe_rand:.6e}")
+
+
     plt.legend()
     plt.show()
 
