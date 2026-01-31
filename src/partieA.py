@@ -1,4 +1,3 @@
-from networkx import sigma
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -35,7 +34,7 @@ def efficient_frontier_closed_form(returns: pd.DataFrame, sigma: pd.DataFrame, n
     C = mu.T @ inv_sigma @ mu
     D = A * C - B ** 2
 
-    target_returns = np.linspace(mu.min(), mu.max(), n_ptf)
+    target_returns = np.linspace(mu.min(), mu.max()*2, n_ptf)
     weights_list = []
     variances = []
 
@@ -220,6 +219,66 @@ def verify_max_sharpe_random(mu, Sigma, R=0.0, n_random=20000, seed=0):
 
     i_best = int(np.argmax(sharpes))
     return float(sharpes[i_best]), W[i_best]
+
+def _ensure_returns_df(returns) -> pd.DataFrame:
+    """
+    Make the code robust if a single industry (Series) is passed.
+    """
+    if isinstance(returns, pd.Series):
+        return returns.to_frame()
+    if isinstance(returns, np.ndarray):
+        if returns.ndim == 1:
+            return pd.DataFrame(returns, columns=["Asset"])
+        return pd.DataFrame(returns)
+    if not isinstance(returns, pd.DataFrame):
+        raise TypeError("returns must be a pandas DataFrame/Series or a numpy array.")
+    return returns
+
+def tangency_portfolio(
+    returns: pd.DataFrame,
+    sigma: pd.DataFrame,
+    R: float,
+    annualize: bool = True
+):
+    returns = _ensure_returns_df(returns)
+    time_factor = 12 if annualize else 1
+
+    zbar = returns.mean().to_numpy().reshape(-1, 1) * time_factor
+    Sigma = sigma.values * time_factor
+    invSigma = np.linalg.inv(Sigma)
+
+    n = Sigma.shape[0]
+    ones = np.ones((n, 1))
+
+    A = (ones.T @ invSigma @ ones).item()
+    B = (ones.T @ invSigma @ zbar).item()
+
+    denom = (B - A * R)
+    if abs(denom) < 1e-12:
+        raise ValueError("B - A*R is too close to zero; tangency portfolio is ill-defined for this R.")
+
+    w = (invSigma @ (zbar - R * ones)) / denom
+    w = w.flatten()
+
+    mu_tan = float(zbar.flatten() @ w)
+    var_tan = float(w @ (Sigma @ w))
+    sig_tan = float(np.sqrt(var_tan))
+    sharpe_tan = (mu_tan - R) / sig_tan if sig_tan > 0 else np.nan
+
+    w_series = pd.Series(w, index=returns.columns, name="w_tan")
+    return w_series, mu_tan, var_tan, sig_tan, sharpe_tan
+
+
+def verify_tangency_max_sharpe(
+    target_returns: np.ndarray,
+    variances: list,
+    R: float
+):
+
+    sigmas = np.sqrt(np.array(variances, dtype=float))
+    sharpes = (np.array(target_returns, dtype=float) - R) / sigmas
+    idx_max = int(np.nanargmax(sharpes))
+    return float(sharpes[idx_max]), idx_max
 
 
 
