@@ -6,84 +6,149 @@ from statsmodels.stats.correlation_tools import cov_nearest
 from scipy.optimize import minimize
 
 
-def load_data(file_path):
+def load_data(file_path: str) -> pd.DataFrame:
+    """
+    Loads the Ken French 48 Industry Portfolios CSV.
+    The 'Date' column is in YYYYMM format; we keep it as an integer index to make slicing easy.
+    """
     df = pd.read_csv(file_path)
-    df["Date"] = pd.to_datetime(df["Date"].astype(str), format="%Y%m")
+    if "Date" not in df.columns:
+        raise ValueError("The CSV must contain a 'Date' column.")
+
+    # Ensure YYYYMM integer index (avoids pandas parse-date warnings)
+    df["Date"] = pd.to_numeric(df["Date"], errors="raise").astype(int)
     df = df.set_index("Date")
-    df = df.replace(-99.99, np.nan).dropna()  # important for Soda early history
     return df
 
-def extract_last_five_years(data, industries):
-    end_date = data.index.max()
-    start_date = end_date - pd.DateOffset(years=5)
-    return data.loc[start_date:end_date, industries]
 
-def compute_sigma(data: pd.DataFrame):
+def extract_last_five_years(data: pd.DataFrame, industry):
+    """
+    Returns the last 5 years (monthly) of returns for the selected industry/industries.
+
+    - If `industry` is a string -> returns a DataFrame with one column
+    - If `industry` is a list of strings -> returns a DataFrame with those columns
+    """
+    end_key = int(data.index[-1])
+    end_dt = pd.to_datetime(str(end_key), format="%Y%m")
+    start_dt = end_dt - pd.DateOffset(years=5)
+    start_key = int(f"{start_dt.year}{start_dt.month:02d}")
+
+    if isinstance(industry, str):
+        industry_cols = [industry]
+    else:
+        industry_cols = list(industry)
+
+    return data.loc[start_key:end_key, industry_cols]
+
+
+def compute_sigma(data: pd.DataFrame) -> pd.DataFrame:
+    """
+    Computes a covariance matrix and nudges it to the nearest PSD matrix (cov_nearest),
+    which helps avoid numerical issues in matrix inversion.
+    """
+    if isinstance(data, pd.Series):
+        data = data.to_frame()
+
     sigma = data.cov()
-    sigma = cov_nearest(sigma, method='nearest')
-    sigma_df = pd.DataFrame(sigma, index=data.columns, columns=data.columns)
-    return sigma_df
+    sigma_psd = cov_nearest(sigma, method="nearest")
+    return pd.DataFrame(sigma_psd, index=sigma.index, columns=sigma.columns)
 
 
-def efficient_frontier_closed_form(returns: pd.DataFrame, sigma: pd.DataFrame, n_ptf = 100, annualize=True):
+def _ensure_returns_df(returns) -> pd.DataFrame:
+    """
+    Make the code robust if a single industry (Series) is passed.
+    """
+    if isinstance(returns, pd.Series):
+        return returns.to_frame()
+    if isinstance(returns, np.ndarray):
+        if returns.ndim == 1:
+            return pd.DataFrame(returns, columns=["Asset"])
+        return pd.DataFrame(returns)
+    if not isinstance(returns, pd.DataFrame):
+        raise TypeError("returns must be a pandas DataFrame/Series or a numpy array.")
+    return returns
+
+
+def efficient_frontier_closed_form(
+    returns: pd.DataFrame,
+    sigma: pd.DataFrame,
+    n_ptf: int = 100,
+    annualize: bool = True
+):
+    """
+    Closed-form efficient frontier for risky assets only.
+    Returns:
+        weights_df: (n_ptf x N) dataframe of weights
+        variances: list of portfolio variances
+        target_returns: array of target means
+        mu: vector of asset expected returns (annualized if annualize=True)
+    """
+    returns = _ensure_returns_df(returns)
     time_factor = 12 if annualize else 1
-    inv_sigma = np.linalg.inv(sigma.values*time_factor)
-    ones = np.ones((len(sigma), 1))
-    mu = returns.mean().values.reshape(-1, 1)*time_factor
-    A = ones.T @ inv_sigma @ ones
-    B = ones.T @ inv_sigma @ mu
-    C = mu.T @ inv_sigma @ mu
+
+    Sigma = sigma.values * time_factor
+    inv_sigma = np.linalg.inv(Sigma)
+
+    ones = np.ones((Sigma.shape[0], 1))
+    mu = returns.mean().to_numpy().reshape(-1, 1) * time_factor
+
+    A = (ones.T @ inv_sigma @ ones).item()
+    B = (ones.T @ inv_sigma @ mu).item()
+    C = (mu.T @ inv_sigma @ mu).item()
     D = A * C - B ** 2
 
-    target_returns = np.linspace(mu.min(), mu.max(), n_ptf)
+    target_returns = np.linspace(mu.min(), mu.max() * 2, n_ptf)
+
     weights_list = []
     variances = []
 
     for r in target_returns:
-        lambda_ = (C - B * r) / D
-        gamma_ = (A * r - B) / D
-        weights = inv_sigma @ (lambda_ * ones + gamma_ * mu)
+        lam = (C - B * r) / D
+        gam = (A * r - B) / D
+        weights = inv_sigma @ (lam * ones + gam * mu)
         weights_list.append(weights.flatten())
         variances.append(
             ((A*r**2-2*B*r+C) / D)[0][0]
         )
 
     weights_df = pd.DataFrame(weights_list, columns=returns.columns)
-    return weights_df, variances,target_returns,mu.flatten()
+    return weights_df, variances, target_returns, mu.flatten()
 
 
-def mean_variance_locus_with_rfr_notes(returns: pd.DataFrame, sigma: pd.DataFrame,
-                                      n_ptf=200, R=-5, annualize=True):
+def mean_variance_locus_with_rfr_notes(
+    returns: pd.DataFrame,
+    sigma: pd.DataFrame,
+    n_ptf: int = 200,
+    R: float = -5,
+    annualize: bool = True
+):
+    returns = _ensure_returns_df(returns)
     time_factor = 12 if annualize else 1
 
-    # annualized inputs
-    zbar = returns.mean().values.reshape(-1, 1) * time_factor
+    zbar = returns.mean().to_numpy().reshape(-1, 1) * time_factor
     Sigma = sigma.values * time_factor
-
     invSigma = np.linalg.inv(Sigma)
+
     n = Sigma.shape[0]
     ones = np.ones((n, 1))
 
-    
     A = (ones.T @ invSigma @ ones).item()
     B = (ones.T @ invSigma @ zbar).item()
     C = (zbar.T @ invSigma @ zbar).item()
 
-    denom = C - 2 * R * B + (R ** 2) * A  
+    denom = C - 2 * R * B + (R ** 2) * A
 
-    
     zbar_min = float(zbar.min())
     zbar_max = float(zbar.max())
-    target_returns = np.linspace(min(R, zbar_min*2), max(R, zbar_max*2), n_ptf)
+    target_returns = np.linspace(min(R, zbar_min * 2), max(R, zbar_max * 2), n_ptf)
 
     weights_list = []
     variances = []
 
     for mu0 in target_returns:
         gamma = (mu0 - R) / denom
-        w = gamma * (invSigma @ (zbar - R * ones))  
-        var = ((mu0 - R) ** 2) / denom              
-
+        w = gamma * (invSigma @ (zbar - R * ones))
+        var = ((mu0 - R) ** 2) / denom
         weights_list.append(w.flatten())
         variances.append(float(var))
 
@@ -91,6 +156,7 @@ def mean_variance_locus_with_rfr_notes(returns: pd.DataFrame, sigma: pd.DataFram
 
     sigma_max = np.sqrt(max(variances)) if len(variances) else 0.0
     sigmas = np.linspace(0.0, sigma_max, n_ptf)
+
     slope = np.sqrt(denom)
     mu_plus = R + slope * sigmas
     mu_minus = R - slope * sigmas
@@ -106,173 +172,113 @@ def mean_variance_locus_with_rfr_notes(returns: pd.DataFrame, sigma: pd.DataFram
     }
 
 
-def efficient_frontier_numerical(returns: pd.DataFrame, sigma: pd.DataFrame, n_ptf = 100, annualize=True,short_selling=False):
-    """
-    min 1/2 w.T @ sigma @ w
-    s.t
-        mu.T @ w = r
-        ones.T @ w = 1
-        w >= 0
-    
-    """
+
+def tangency_portfolio(
+    returns: pd.DataFrame,
+    sigma: pd.DataFrame,
+    R: float,
+    annualize: bool = True
+):
+    returns = _ensure_returns_df(returns)
     time_factor = 12 if annualize else 1
-    sigma_t = sigma.values*time_factor
-    mu = returns.mean().values.reshape(-1, 1)*time_factor
-    mu_assets = mu.flatten()
 
-    target_returns = np.linspace(mu_assets.min(), mu_assets.max(), n_ptf)
-    def obj_fn(w):
-        return 0.5 * w.T @ sigma_t @ w
-    weights_list = []
-    variances = []
-    for r in target_returns:
-        cons = (
-            {'type': 'eq', 'fun': lambda w: mu.T @ w - r},
-            {'type': 'eq', 'fun': lambda w: np.sum(w) - 1}
-        )
-        if not short_selling:
-            bounds = [(0, None) for _ in range(len(sigma))]
-        else:
-            bounds = [(-np.inf, np.inf) for _ in range(len(sigma))]
-        w0 = np.ones(len(sigma)) / len(sigma)
-        res = minimize(obj_fn, w0, constraints=cons, bounds=bounds)
-        if not res.success:
-            pass
-        weights_list.append(res.x)
-        variances.append(2*res.fun)
+    zbar = returns.mean().to_numpy().reshape(-1, 1) * time_factor
+    Sigma = sigma.values * time_factor
+    invSigma = np.linalg.inv(Sigma)
 
-    weights_df = pd.DataFrame(weights_list, columns=returns.columns)
-    return weights_df, variances,target_returns,mu.flatten()
+    n = Sigma.shape[0]
+    ones = np.ones((n, 1))
 
-def efficient_frontier_with_rfr_noshort(returns, sigma, R, n_ptf=100, annualize=True):
-    time_factor = 12 if annualize else 1
-    sigma_t = sigma.values * time_factor
-    mu = returns.mean().values.reshape(-1, 1) * time_factor
-    mu_assets = mu.flatten()
+    A = (ones.T @ invSigma @ ones).item()
+    B = (ones.T @ invSigma @ zbar).item()
 
-    target_returns = np.linspace(mu_assets.min(), mu_assets.max(), n_ptf)
+    denom = (B - A * R)
+    if abs(denom) < 1e-12:
+        raise ValueError("B - A*R is too close to zero; tangency portfolio is ill-defined for this R.")
 
-    def obj_fn(w):
-        return 0.5 * w.T @ sigma_t @ w
+    w = (invSigma @ (zbar - R * ones)) / denom
+    w = w.flatten()
 
-    weights_list = []
-    variances = []
+    mu_tan = float(zbar.flatten() @ w)
+    var_tan = float(w @ (Sigma @ w))
+    sig_tan = float(np.sqrt(var_tan))
+    sharpe_tan = (mu_tan - R) / sig_tan if sig_tan > 0 else np.nan
 
-    for mu0 in target_returns:
-        cons = (
-            {'type': 'eq', 'fun': lambda w, mu0=mu0: (mu - R).T @ w - (mu0 - R)},
-            {'type': 'ineq', 'fun': lambda w: 1 - np.sum(w)}
-        )
-        bounds = [(0, None) for _ in range(len(sigma))]
-        w0 = np.ones(len(sigma)) / len(sigma)
-        res = minimize(obj_fn, w0, method='SLSQP', constraints=cons, bounds=bounds)
-        if not res.success:
-            continue
-        weights_list.append(res.x)
-        variances.append(2 * res.fun)
-
-    weights_df = pd.DataFrame(weights_list, columns=returns.columns)
-    return weights_df, variances, target_returns, mu.flatten()
-
-# =========================
-# TP1 - Partie A - Q6
-# Tangency portfolio WITH risk-free asset + NO short-selling (R = 0)
-# maximize Sharpe(w) = (mu'w - R) / sqrt(w' Sigma w)
-# s.t. sum(w)=1 and w_i >= 0
-# =========================
-def tangency_portfolio_noshort(mu, Sigma, R=0.0):
-    n = len(mu)
-
-    def neg_sharpe(w):
-        port_return = float(mu @ w)
-        port_variance = float(w @ Sigma @ w)
-        if port_variance <= 1e-12:
-            return 1e9  # penalty
-        sharpe_ratio = (port_return - R) / np.sqrt(port_variance)
-        return -sharpe_ratio
-
-    constraints = ({'type': 'eq', 'fun': lambda w: np.sum(w) - 1},)
-    bounds = [(0, None) for _ in range(n)]
-    w0 = np.ones(n) / n
-
-    result = minimize(neg_sharpe, w0, method='SLSQP', bounds=bounds, constraints=constraints)
-
-    if not result.success:
-        raise ValueError(f"Optimization did not converge: {result.message}")
-
-    w_star = result.x
-    mu_p = float(mu @ w_star)
-    var_p = float(w_star @ Sigma @ w_star)
-    sharpe_p = (mu_p - R) / np.sqrt(var_p)
-
-    return w_star, mu_p, var_p, sharpe_p
-def verify_max_sharpe_random(mu, Sigma, R=0.0, n_random=20000, seed=0):
-    rng = np.random.default_rng(seed)
-    n = len(mu)
-
-    # Dirichlet => poids >=0 et somme=1
-    W = rng.dirichlet(np.ones(n), size=n_random)
-
-    port_returns = W @ mu
-    port_vars = np.einsum("ij,jk,ik->i", W, Sigma, W)
-    port_sigs = np.sqrt(np.maximum(port_vars, 1e-12))
-    sharpes = (port_returns - R) / port_sigs
-
-    i_best = int(np.argmax(sharpes))
-    return float(sharpes[i_best]), W[i_best]
+    w_series = pd.Series(w, index=returns.columns, name="w_tan")
+    return w_series, mu_tan, var_tan, sig_tan, sharpe_tan
 
 
+def verify_tangency_max_sharpe(
+    target_returns: np.ndarray,
+    variances: list,
+    R: float
+):
 
-
+    sigmas = np.sqrt(np.array(variances, dtype=float))
+    sharpes = (np.array(target_returns, dtype=float) - R) / sigmas
+    idx_max = int(np.nanargmax(sharpes))
+    return float(sharpes[idx_max]), idx_max
 
 def main():
     data = load_data('data/48_Industry_Portfolios.csv')
 
-    industries = ['Food', 'Soda', 'Beer', 'Smoke', 'Fin']
-    data_last_five_years = extract_last_five_years(data, industries)
+    industries = ['Books', 'Soda', 'FabPr', 'Steel', 'Aero']
+    rets = extract_last_five_years(data, industries)
 
-    sigma = compute_sigma(data_last_five_years)
-    print(sigma)
-    weights_cf,variances_cf,returns_cf,mu_cf = efficient_frontier_closed_form(data_last_five_years,sigma,annualize=True)
-    weights_num,variances_num,returns_num,mu_num = efficient_frontier_numerical(data_last_five_years,sigma,annualize=True,short_selling=False)
+    sigma = compute_sigma(rets)
 
-    print(f"Comparing mu_cf vs mu_num: {np.allclose(mu_cf, mu_num)}")
-    print(f"Comparing returns_cf vs returns_num: {np.allclose(returns_cf, returns_num)}")
-    print(f"Comparing variances_cf vs variances_num: {np.allclose(variances_cf, variances_num)}")
-    print(f"Comparing weights_cf vs weights_num: {np.allclose(weights_cf.values, weights_num.values, atol=1e-3, rtol=1e-3)}")
-
-
-    # for i,w in enumerate(zip(weights_cf.values, weights_num.values)):
-    #     w_cf, w_num = w
-    #     print(f"Weight mismatch for index {i}: {w_cf} vs {w_num}")
-    #     print(w_cf - w_num)
-
-
-    # print(weights_cf)
-    asset_sigmas = np.sqrt(np.diag(sigma.values * 12))
-    for i, industry in enumerate(industries):
-        plt.scatter(asset_sigmas[i], mu_cf[i])
-        plt.text(asset_sigmas[i], mu_cf[i], industry)
-
-    plt.plot(np.sqrt(variances_cf), returns_cf, color='red', linewidth=2, label='Frontière efficiente (Avec Vente à découvert)')
-
-    weights, variances, rets, mu = efficient_frontier_closed_form(
-        data_last_five_years, sigma, annualize=True
+    weights_df, variances, target_returns, mu = efficient_frontier_closed_form(
+        rets, sigma, n_ptf=500, annualize=True
     )
 
-    R = 0
+    R = 2
     rf_res = mean_variance_locus_with_rfr_notes(
-        data_last_five_years, sigma, n_ptf=250, R=R, annualize=True
+        rets, sigma, n_ptf=250, R=R, annualize=True
     )
+
+
+    # Portefeuille tengent
+    w_tan, mu_tan, var_tan, sig_tan, sharpe_tan = tangency_portfolio(rets, sigma, R=R, annualize=True)
+
+    sep = "=" * 72
+    print(f"\n{sep}")
+    print("QUESTION 3 — Portefeuille tangent (risky-only) et ratio de Sharpe")
+    print(sep)
+    print(f"Taux sans risque R (annuel, en %): {R:.6f}")
+    print(f"Somme des poids (doit être 1): {w_tan.sum():.10f}")
+    print(f"Moyenne du portefeuille tangent μ_tan (%/an): {mu_tan:.6f}")
+    print(f"Variance du portefeuille tangent Var_tan: {var_tan:.6f}")
+    print(f"Écart-type du portefeuille tangent σ_tan (%/an): {sig_tan:.6f}")
+    print(f"Sharpe_tan = (μ_tan - R)/σ_tan: {sharpe_tan:.6f}")
+
+    print("\nPoids par industrie (w_tan):")
+    print(w_tan.to_string(float_format=lambda x: f"{x:+.6f}"))
+
+    sharpe_max, idx_max = verify_tangency_max_sharpe(target_returns, variances, R=R)
+    print("\nVérification numérique (frontière efficiente risquée):")
+    print(f"Sharpe maximum sur la frontière (discrétisée): {sharpe_max:.6f}")
+    print(f"Différence |Sharpe_max - Sharpe_tan|: {abs(sharpe_max - sharpe_tan):.6e}")
+
+    w_frontier_max = weights_df.iloc[idx_max]
+    w_frontier_max = w_frontier_max / w_frontier_max.sum()
+    print("\nPoids du portefeuille (frontière) au Sharpe max:")
+    print(w_frontier_max.to_string(float_format=lambda x: f"{x:+.6f}"))
+    print(sep)
+
+    asset_sigmas = np.sqrt(np.diag(sigma.values * 12))
 
     plt.figure(figsize=(9, 6))
     plt.scatter(asset_sigmas, mu, marker='o')
     for i, ind in enumerate(industries):
         plt.text(asset_sigmas[i], mu[i], f" {ind}", va='center')
 
-    plt.plot(np.sqrt(variances), rets, color='red', linewidth=2, label='Sans actif sans risque')
+    plt.plot(np.sqrt(variances), target_returns, color='red', linewidth=2, label='Sans actif sans risque')
+
+    # Usually only the upper ray is shown as "efficient" with risk-free (CML),
+    # but we keep both (as in your original code) to match the expected format.
     plt.plot(rf_res["sigmas_line"], rf_res["mu_plus"], linestyle='--', linewidth=2, label='Avec actif sans risque (+)')
     plt.plot(rf_res["sigmas_line"], rf_res["mu_minus"], linestyle='--', linewidth=2, label='Avec actif sans risque (-)')
+
     plt.scatter([0.0], [R], marker='x')
     plt.text(0.0, R, " R", va='bottom')
 
