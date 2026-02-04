@@ -275,15 +275,4 @@ print("Mean (ann) =", mu_ann)
 print("Vol  (ann) =", vol_ann)
 print("Sharpe     =", sharpe_ann)
 
-import matplotlib.pyplot as plt
-
-# Visualisation des poids MAXSER (non nuls)
-w_plot = w_maxser[w_maxser.abs() > 1e-6].sort_values()
-
-plt.figure(figsize=(8, 4))
-w_plot.plot(kind="bar")
-plt.title("MAXSER portfolio weights (non-zero)")
-plt.ylabel("Weight")
-plt.tight_layout()
-plt.show()
 
