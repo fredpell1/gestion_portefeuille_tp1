@@ -20,7 +20,7 @@ def b1_bootstrap_1000(
     industries: list,
     B: int = 1000,
     annualize: bool = True,
-    R: float = 0.0,
+    R: float = 2,
     n_ptf: int = 80,
     seed: int = 0
 ):

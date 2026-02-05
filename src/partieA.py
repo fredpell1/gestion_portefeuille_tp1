@@ -52,7 +52,7 @@ def efficient_frontier_closed_form(returns: pd.DataFrame, sigma: pd.DataFrame, n
 
 
 def mean_variance_locus_with_rfr_notes(returns: pd.DataFrame, sigma: pd.DataFrame,
-                                      n_ptf=200, R=-5, annualize=True):
+                                      n_ptf=200, R=2, annualize=True):
     time_factor = 12 if annualize else 1
 
     # annualized inputs
@@ -175,11 +175,11 @@ def efficient_frontier_with_rfr_noshort(returns, sigma, R, n_ptf=100, annualize=
 
 # =========================
 # TP1 - Partie A - Q6
-# Tangency portfolio WITH risk-free asset + NO short-selling (R = 0)
+# Tangency portfolio WITH risk-free asset + NO short-selling (R = 2)
 # maximize Sharpe(w) = (mu'w - R) / sqrt(w' Sigma w)
 # s.t. sum(w)=1 and w_i >= 0
 # =========================
-def tangency_portfolio_noshort(mu, Sigma, R=0.0):
+def tangency_portfolio_noshort(mu, Sigma, R=2):
     n = len(mu)
 
     def neg_sharpe(w):
@@ -205,7 +205,7 @@ def tangency_portfolio_noshort(mu, Sigma, R=0.0):
     sharpe_p = (mu_p - R) / np.sqrt(var_p)
 
     return w_star, mu_p, var_p, sharpe_p
-def verify_max_sharpe_random(mu, Sigma, R=0.0, n_random=20000, seed=0):
+def verify_max_sharpe_random(mu, Sigma, R=2, n_random=20000, seed=0):
     rng = np.random.default_rng(seed)
     n = len(mu)
 
@@ -234,45 +234,7 @@ def _ensure_returns_df(returns) -> pd.DataFrame:
         raise TypeError("returns must be a pandas DataFrame/Series or a numpy array.")
     return returns
 
-def tangency_portfolio(
-    returns: pd.DataFrame,
-    sigma: pd.DataFrame,
-    R: float,
-    annualize: bool = True
-):
-    returns = _ensure_returns_df(returns)
-    time_factor = 12 if annualize else 1
 
-    zbar = returns.mean().to_numpy().reshape(-1, 1) * time_factor
-    Sigma = sigma.values * time_factor
-
-    n = Sigma.shape[0]
-    ones = np.ones((n, 1))
-
-    # --- Stabilisation numérique (ridge) ---
-    eps = 1e-6 * np.trace(Sigma) / n
-    Sigma_reg = Sigma + eps * np.eye(n)
-
-    # solve(Sigma_reg, ·) plus stable que inv()
-    invSigma_mu = np.linalg.solve(Sigma_reg, zbar)
-    invSigma_ones = np.linalg.solve(Sigma_reg, ones)
-
-    A = (ones.T @ invSigma_ones).item()               # 1' Σ^{-1} 1
-    B = (ones.T @ invSigma_mu).item()                 # 1' Σ^{-1} μ
-
-    denom = (B - A * R)
-    if abs(denom) < 1e-12:
-        raise ValueError("B - A*R est trop proche de zéro; portefeuille tangent mal défini.")
-
-    w = (np.linalg.solve(Sigma_reg, (zbar - R * ones)) / denom).flatten()
-
-    mu_tan = float(zbar.flatten() @ w)
-    var_tan = float(w @ (Sigma_reg @ w))       # <- use Sigma_reg (more stable)
-    sig_tan = float(np.sqrt(var_tan))
-    sharpe_tan = (mu_tan - R) / sig_tan if sig_tan > 0 else np.nan
-
-    w_series = pd.Series(w, index=returns.columns, name="w_tan")
-    return w_series, mu_tan, var_tan, sig_tan, sharpe_tan
 
 def verify_tangency_max_sharpe(
     target_returns: np.ndarray,
@@ -285,9 +247,39 @@ def verify_tangency_max_sharpe(
     idx_max = int(np.nanargmax(sharpes))
     return float(sharpes[idx_max]), idx_max
 
+def tangency_portfolio(
+    returns: pd.DataFrame,
+    sigma: pd.DataFrame,
+    R: float,
+    annualize: bool = True
+):
+    returns = _ensure_returns_df(returns)
+    time_factor = 12 if annualize else 1
 
+    zbar = returns.mean().to_numpy().reshape(-1, 1) * time_factor
+    Sigma = sigma.values * time_factor
+    invSigma = np.linalg.inv(Sigma)
 
+    n = Sigma.shape[0]
+    ones = np.ones((n, 1))
 
+    A = (ones.T @ invSigma @ ones).item()
+    B = (ones.T @ invSigma @ zbar).item()
+
+    denom = (B - A * R)
+    if abs(denom) < 1e-12:
+        raise ValueError("B - A*R is too close to zero; tangency portfolio is ill-defined for this R.")
+
+    w = (invSigma @ (zbar - R * ones)) / denom
+    w = w.flatten()
+
+    mu_tan = float(zbar.flatten() @ w)
+    var_tan = float(w @ (Sigma @ w))
+    sig_tan = float(np.sqrt(var_tan))
+    sharpe_tan = (mu_tan - R) / sig_tan if sig_tan > 0 else np.nan
+
+    w_series = pd.Series(w, index=returns.columns, name="w_tan")
+    return w_series, mu_tan, var_tan, sig_tan, sharpe_tan
 
 def main():
     data = load_data('data/48_Industry_Portfolios.csv')
@@ -324,7 +316,7 @@ def main():
         data_last_five_years, sigma, annualize=True
     )
 
-    R = 0
+    R = 2
     rf_res = mean_variance_locus_with_rfr_notes(
         data_last_five_years, sigma, n_ptf=250, R=R, annualize=True
     )
@@ -360,7 +352,7 @@ def main():
 
     
     # Q5 - Mean-Variance Locus (with risk-free asset, no short-selling)
-    R = 0
+    R = 2
     weights_noshort, variances_noshort, rets_noshort, mu_noshort = efficient_frontier_with_rfr_noshort(
     data_last_five_years, sigma, R, n_ptf=250, annualize=True
 )
@@ -371,8 +363,8 @@ def main():
     plt.plot(sig_q5, mu_q5, linestyle='-.', linewidth=2,
          label='Mean-Variance locus (Rf + no-short)')
 
-    # Q6 - Tangency portfolio (Rf = 0, no short-selling)
-    R = 0.0
+    # Q6 - Tangency portfolio (Rf = 2, no short-selling)
+    R = 2
     mu_assets = data_last_five_years.mean().values * 12
     Sigma_assets = sigma.values * 12
 
