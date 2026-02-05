@@ -245,29 +245,34 @@ def tangency_portfolio(
 
     zbar = returns.mean().to_numpy().reshape(-1, 1) * time_factor
     Sigma = sigma.values * time_factor
-    invSigma = np.linalg.inv(Sigma)
 
     n = Sigma.shape[0]
     ones = np.ones((n, 1))
 
-    A = (ones.T @ invSigma @ ones).item()
-    B = (ones.T @ invSigma @ zbar).item()
+    # --- Stabilisation numérique (ridge) ---
+    eps = 1e-6 * np.trace(Sigma) / n
+    Sigma_reg = Sigma + eps * np.eye(n)
+
+    # solve(Sigma_reg, ·) plus stable que inv()
+    invSigma_mu = np.linalg.solve(Sigma_reg, zbar)
+    invSigma_ones = np.linalg.solve(Sigma_reg, ones)
+
+    A = (ones.T @ invSigma_ones).item()               # 1' Σ^{-1} 1
+    B = (ones.T @ invSigma_mu).item()                 # 1' Σ^{-1} μ
 
     denom = (B - A * R)
     if abs(denom) < 1e-12:
-        raise ValueError("B - A*R is too close to zero; tangency portfolio is ill-defined for this R.")
+        raise ValueError("B - A*R est trop proche de zéro; portefeuille tangent mal défini.")
 
-    w = (invSigma @ (zbar - R * ones)) / denom
-    w = w.flatten()
+    w = (np.linalg.solve(Sigma_reg, (zbar - R * ones)) / denom).flatten()
 
     mu_tan = float(zbar.flatten() @ w)
-    var_tan = float(w @ (Sigma @ w))
+    var_tan = float(w @ (Sigma_reg @ w))       # <- use Sigma_reg (more stable)
     sig_tan = float(np.sqrt(var_tan))
     sharpe_tan = (mu_tan - R) / sig_tan if sig_tan > 0 else np.nan
 
     w_series = pd.Series(w, index=returns.columns, name="w_tan")
     return w_series, mu_tan, var_tan, sig_tan, sharpe_tan
-
 
 def verify_tangency_max_sharpe(
     target_returns: np.ndarray,
