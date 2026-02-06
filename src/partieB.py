@@ -3,6 +3,7 @@ import pandas as pd
 from scipy.optimize import minimize
 import cvxpy as cp
 import matplotlib.pyplot as plt
+
 from partieA import (
     compute_sigma,
     efficient_frontier_closed_form,
@@ -10,6 +11,7 @@ from partieA import (
     tangency_portfolio,
     tangency_portfolio_noshort,
 )
+from itertools import combinations
 
 # ============================================================
 # PARTIE B - Q1 Bootstrap (comparaisons avec Partie A)
@@ -508,7 +510,76 @@ def tangency_portfolio_heuristic(risky_frontier,riskless_frontier,rf):
     weights_df = pd.DataFrame(risky_frontier['weights'],columns=risky_frontier['weights'].columns)
     return risky_frontier['weights'].iloc[idx], risky_frontier['variance'][idx], risky_frontier['return'][idx], sharpe_ratio
 
+# ---------- Question 3 ----------
+def max_sharpe(returns, R=-5, annualize=True, long_only=False):
+    sigma = compute_sigma(returns)
 
+    tf = 12 if annualize else 1
+    mu = returns.mean().to_numpy() * tf
+    Sigma = sigma.to_numpy() * tf
+    ones = np.ones(len(mu))
+
+    if long_only:
+        w, _, _, sharpe = tangency_portfolio_noshort(mu, Sigma, R=R)
+        return w, sharpe
+
+    invS = np.linalg.pinv(Sigma)
+    excess = mu - R * ones
+    z = invS @ excess
+    w = z / (ones @ z)
+    sharpe = float(np.sqrt(excess @ invS @ excess))
+    return w, sharpe
+
+# ---------- Brute force selection ----------
+
+def best_5_industries_max_sharpe(df, R, annualize=True, long_only=False):
+    # keep only columns with positive (annualized) mean
+    tf = 12 if annualize else 1
+    cols = df.columns[(df.mean() * tf) > 0]
+
+    best_combo, best_w, best_s = None, None, -np.inf
+
+    for combo in combinations(cols, 5):
+        sub = df[list(combo)].dropna()
+        if long_only:
+            w, s = max_sharpe(sub, R=R, annualize=annualize, long_only=long_only)
+        else:
+            w, s = max_sharpe(sub, R=R, annualize=annualize, long_only=False)
+
+        if s > best_s:
+            best_combo, best_w, best_s = combo, w, s
+
+    weights = pd.Series(best_w, index=list(best_combo))
+    return best_combo, weights, best_s
+
+def best_5_industries_greedy(
+    df, R, annualize=True, long_only=False
+):
+    tf = 12 if annualize else 1
+    cols = df.columns[(df.mean() * tf) > 0].tolist()
+    if len(cols) < 5:
+        raise ValueError("Not enough positive-mean industries to pick 5.")
+
+    data = df[cols].dropna()
+
+    selected = []
+    remaining = cols[:]
+
+    while len(selected) < 5:
+        best_cand, best_s = None, -np.inf
+        for c in remaining:
+            trial = selected + [c]
+            _, s = max_sharpe(data[trial], R=R, annualize=annualize, long_only=long_only)
+            if s > best_s:
+                best_s, best_cand = s, c
+        selected.append(best_cand)
+        remaining.remove(best_cand)
+
+
+    # final weights + sharpe
+    w, s = max_sharpe(data[selected], R=R, annualize=annualize, long_only=long_only)
+    weights = pd.Series(w, index=selected)
+    return tuple(selected), weights, s
 
 # Q4 — MAXSER allocation (Ao et al. 2018) on 48 industries
 # Data: monthly returns, last 10 years (120 months)
