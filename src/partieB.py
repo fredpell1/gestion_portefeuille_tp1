@@ -10,6 +10,8 @@ from partieA import (
     efficient_frontier_numerical,
     tangency_portfolio,
     tangency_portfolio_noshort,
+    mean_variance_locus_with_rfr_notes,
+    efficient_frontier_with_rfr_noshort, 
 )
 from itertools import combinations
 
@@ -44,9 +46,15 @@ def b1_bootstrap_1000(
     ret_q1_mid = np.zeros(B); sig_q1_mid = np.zeros(B)
     ret_q4_mid = np.zeros(B); sig_q4_mid = np.zeros(B)
 
+    # Q2 : frontier avec Rf (short-selling allowed) — point médian
+    mu_q2_mid = np.zeros(B); sig_q2_mid = np.zeros(B)
+
     # Q3 : tangency non-contraint
     mu_q3 = np.zeros(B); sig_q3 = np.zeros(B); var_q3 = np.zeros(B); sharpe_q3 = np.zeros(B)
     w_q3 = np.zeros((B, n))
+
+    # Q5 : frontier avec Rf (no-short) — point médian
+    mu_q5_mid = np.zeros(B); sig_q5_mid = np.zeros(B)
 
     # Q6 : tangency no-short
     mu_q6 = np.zeros(B); sig_q6 = np.zeros(B); var_q6 = np.zeros(B); sharpe_q6 = np.zeros(B)
@@ -68,14 +76,21 @@ def b1_bootstrap_1000(
         sig_q1_mid[b] = float(sig1[mid1])
         ret_q1_mid[b] = float(rets1[mid1])
 
-        # ----- Q4 (no-short) : frontière sans Rf -----
-        _, var4, rets4, _ = efficient_frontier_numerical(
-            boot, sigma_b, n_ptf=n_ptf, annualize=annualize, short_selling=False
-        )
-        sig4 = np.sqrt(np.array(var4, dtype=float))
-        mid4 = len(sig4) // 2
-        sig_q4_mid[b] = float(sig4[mid4])
-        ret_q4_mid[b] = float(rets4[mid4])
+        # ----- Q2 (avec Rf, short-selling allowed) : locus + point médian -----
+        try:
+            rf_b = mean_variance_locus_with_rfr_notes(
+                boot, sigma_b, n_ptf=n_ptf, R=R, annualize=annualize
+            )
+            sig2 = np.sqrt(np.array(rf_b["variances"], dtype=float))
+            mu2  = np.array(rf_b["target_returns"], dtype=float)
+
+            mid2 = len(sig2) // 2
+            sig_q2_mid[b] = float(sig2[mid2])
+            mu_q2_mid[b]  = float(mu2[mid2])
+
+        except Exception:
+            sig_q2_mid[b] = np.nan
+            mu_q2_mid[b]  = np.nan
 
         # ----- Q3 (tangency non-contraint) : avec R -----
         try:
@@ -109,6 +124,31 @@ def b1_bootstrap_1000(
             var_q3[b] = np.nan
             sharpe_q3[b] = np.nan
             w_q3[b, :] = np.nan
+        
+        # ----- Q4 (no-short) : frontière sans Rf -----
+        _, var4, rets4, _ = efficient_frontier_numerical(
+            boot, sigma_b, n_ptf=n_ptf, annualize=annualize, short_selling=False
+        )
+        sig4 = np.sqrt(np.array(var4, dtype=float))
+        mid4 = len(sig4) // 2
+        sig_q4_mid[b] = float(sig4[mid4])
+        ret_q4_mid[b] = float(rets4[mid4])
+
+        # ----- Q5 (avec Rf, no-short) : locus + point médian -----
+        try:
+            _, var5, rets5, _ = efficient_frontier_with_rfr_noshort(
+                boot, sigma_b, R, n_ptf=n_ptf, annualize=annualize
+            )
+            sig5 = np.sqrt(np.array(var5, dtype=float))
+            mu5  = np.array(rets5, dtype=float)[:len(sig5)]
+
+            mid5 = len(sig5) // 2
+            sig_q5_mid[b] = float(sig5[mid5])
+            mu_q5_mid[b]  = float(mu5[mid5])
+
+        except Exception:
+            sig_q5_mid[b] = np.nan
+            mu_q5_mid[b]  = np.nan
 
         # ----- Q6 (tangency no-short) : avec R -----
         mu_vec = boot.mean().values * tf
@@ -140,6 +180,11 @@ def b1_bootstrap_1000(
     # ============================================================
     sigma_A = compute_sigma(returns_5)
 
+    # Points des industries (placement sur les graphs)
+    asset_sigmas_A = np.sqrt(np.diag(sigma_A.values * tf))
+    asset_mu_A = returns_5.mean().values * tf
+
+
     # Q1 (A) : frontière short-selling autorisé + point médian
     _, var1A, rets1A, _ = efficient_frontier_closed_form(
         returns_5, sigma_A, n_ptf=n_ptf, annualize=annualize
@@ -148,13 +193,18 @@ def b1_bootstrap_1000(
     mid1A = len(sig1A) // 2
     q1_A_mid = {"sigma": float(sig1A[mid1A]), "mu": float(rets1A[mid1A])}
 
-    # Q4 (A) : frontière no-short + point médian
-    _, var4A, rets4A, _ = efficient_frontier_numerical(
-        returns_5, sigma_A, n_ptf=n_ptf, annualize=annualize, short_selling=False
+    # Q2 (A) : locus avec Rf + point médian
+    rf_A = mean_variance_locus_with_rfr_notes(
+        returns_5, sigma_A, n_ptf=n_ptf, R=R, annualize=annualize
     )
-    sig4A = np.sqrt(np.array(var4A, dtype=float))
-    mid4A = len(sig4A) // 2
-    q4_A_mid = {"sigma": float(sig4A[mid4A]), "mu": float(rets4A[mid4A])}
+    sig2A = np.sqrt(np.array(rf_A["variances"], dtype=float))
+    mu2A  = np.array(rf_A["target_returns"], dtype=float)
+    mid2A = len(sig2A)//2
+    q2_A_mid = {"sigma": float(sig2A[mid2A]), "mu": float(mu2A[mid2A])}
+
+    # keep curve + mid only
+    q2_A = {"mid": q2_A_mid, "curve_sig": sig2A, "curve_mu": mu2A}
+
 
     # Q3 (A) : tangency non-contraint
     w_tan_A, mu_tan_A, var_tan_A, sig_tan_A, sharpe_tan_A = tangency_portfolio(
@@ -167,6 +217,27 @@ def b1_bootstrap_1000(
         "sigma": float(sig_tan_A),
         "sharpe": float(sharpe_tan_A),
     }
+
+    # Q4 (A) : frontière no-short + point médian
+    _, var4A, rets4A, _ = efficient_frontier_numerical(
+        returns_5, sigma_A, n_ptf=n_ptf, annualize=annualize, short_selling=False
+    )
+    sig4A = np.sqrt(np.array(var4A, dtype=float))
+    mid4A = len(sig4A) // 2
+    q4_A_mid = {"sigma": float(sig4A[mid4A]), "mu": float(rets4A[mid4A])}
+
+    # Q5 (A) : locus avec Rf + no-short + point médian
+    _, var5A, rets5A, _ = efficient_frontier_with_rfr_noshort(
+        returns_5, sigma_A, R, n_ptf=n_ptf, annualize=annualize
+    )
+    sig5A = np.sqrt(np.array(var5A, dtype=float))
+    mu5A  = np.array(rets5A, dtype=float)[:len(sig5A)]
+    mid5A = len(sig5A)//2
+    q5_A_mid = {"sigma": float(sig5A[mid5A]), "mu": float(mu5A[mid5A])}
+
+    # keep curve + mid only
+    q5_A = {"mid": q5_A_mid, "curve_sig": sig5A, "curve_mu": mu5A}
+
 
     # Q6 (A) : tangency no-short
     mu_vec_A = returns_5.mean().values * tf
@@ -191,14 +262,21 @@ def b1_bootstrap_1000(
         "series": {
             "sig_q1_mid": sig_q1_mid,
             "ret_q1_mid": ret_q1_mid,
-            "sig_q4_mid": sig_q4_mid,
-            "ret_q4_mid": ret_q4_mid,
+
+            "sig_q2_mid": sig_q2_mid,
+            "mu_q2_mid": mu_q2_mid,
 
             "mu_q3": mu_q3,
             "sig_q3": sig_q3,
             "var_q3": var_q3,
             "sharpe_q3": sharpe_q3,
             "w_q3": w_q3,
+
+            "sig_q4_mid": sig_q4_mid,
+            "ret_q4_mid": ret_q4_mid,
+
+            "sig_q5_mid": sig_q5_mid,
+            "mu_q5_mid": mu_q5_mid,
 
             "mu_q6": mu_q6,
             "sig_q6": sig_q6,
@@ -210,7 +288,11 @@ def b1_bootstrap_1000(
         # Résumés bootstrap
         "resume": {
             "Q1_point_median": {"sigma": stats(sig_q1_mid), "retour": stats(ret_q1_mid)},
-            "Q4_point_median": {"sigma": stats(sig_q4_mid), "retour": stats(ret_q4_mid)},
+
+            "Q2_point_median_avec_rf": {
+                "sigma": stats(sig_q2_mid),
+                "retour": stats(mu_q2_mid),
+            },
 
             "Q3_tangency_non_contraint": {
                 "mu": stats(mu_q3),
@@ -219,6 +301,14 @@ def b1_bootstrap_1000(
                 "sharpe": stats(sharpe_q3),
                 "poids": {ind: stats(w_q3[:, j]) for j, ind in enumerate(industries)},
             },
+
+            "Q4_point_median": {"sigma": stats(sig_q4_mid), "retour": stats(ret_q4_mid)},
+
+            "Q5_point_median_avec_rf_noshort": {
+                "sigma": stats(sig_q5_mid),
+                "retour": stats(mu_q5_mid),
+            },
+
             "Q6_tangency_no_short": {
                 "mu": stats(mu_q6),
                 "var": stats(var_q6),
@@ -231,15 +321,23 @@ def b1_bootstrap_1000(
         # Valeurs Partie A (échantillon original)
         "A": {
             "Q1_mid": q1_A_mid,
-            "Q4_mid": q4_A_mid,
+            "Q2": q2_A,
             "Q3": q3_A,
+            "Q4_mid": q4_A_mid,
+            "Q5": q5_A,
             "Q6": q6_A,
             "frontieres": {
                 "Q1_sig": sig1A,
                 "Q1_mu": np.array(rets1A, dtype=float),
                 "Q4_sig": sig4A,
                 "Q4_mu": np.array(rets4A, dtype=float),
+            },
+            "assets": {
+                "names": industries,
+                "sigma": asset_sigmas_A,
+                "mu": asset_mu_A,
             }
+
         }
     }
 
@@ -282,6 +380,20 @@ def b1_print_sections_fr(res_b1: dict):
     print(f"  Largeur bande 90% sur μ : {largeur_90(s['retour']):.4f}")
     print(f"  Écart (p50_boot - A) sur σ : {s['sigma']['p50'] - sigA:+.4f}")
     print(f"  Écart (p50_boot - A) sur μ : {s['retour']['p50'] - muA:+.4f}")
+
+    # ---------------- Q2 ----------------
+    print("\n" + "-" * 86)
+    print("Q2 — Frontière efficiente (avec actif sans risque, short-selling autorisé)")
+    q2 = r["Q2_point_median_avec_rf"]
+    q2A = A["Q2"]
+
+    print("Point médian de locus (index ~50%) — Bootstrap vs Partie A :")
+    print(f"  σ_boot (p50) = {q2['sigma']['p50']:.4f} | 5%-95% = [{q2['sigma']['p05']:.4f}, {q2['sigma']['p95']:.4f}]"
+          f" | σ_A = {q2A['mid']['sigma']:.4f}")
+    print(f"  μ_boot (p50) = {q2['retour']['p50']:.4f} | 5%-95% = [{q2['retour']['p05']:.4f}, {q2['retour']['p95']:.4f}]"
+          f" | μ_A = {q2A['mid']['mu']:.4f}")
+
+
 
     # ---------------- Q3 ----------------
     print("\n" + "-" * 86)
@@ -327,6 +439,19 @@ def b1_print_sections_fr(res_b1: dict):
     print(f"  Écart (p50_boot - A) sur σ : {s['sigma']['p50'] - sigA:+.4f}")
     print(f"  Écart (p50_boot - A) sur μ : {s['retour']['p50'] - muA:+.4f}")
 
+    # ---------------- Q5 ----------------
+    print("\n" + "-" * 86)
+    print("Q5 — Frontière efficiente (avec actif sans risque, no-short)")
+    q5 = r["Q5_point_median_avec_rf_noshort"]
+    q5A = A["Q5"]
+
+    print("Point médian de locus (index ~50%) — Bootstrap vs Partie A :")
+    print(f"  σ_boot (p50) = {q5['sigma']['p50']:.4f} | 5%-95% = [{q5['sigma']['p05']:.4f}, {q5['sigma']['p95']:.4f}]"
+          f" | σ_A = {q5A['mid']['sigma']:.4f}")
+    print(f"  μ_boot (p50) = {q5['retour']['p50']:.4f} | 5%-95% = [{q5['retour']['p05']:.4f}, {q5['retour']['p95']:.4f}]"
+          f" | μ_A = {q5A['mid']['mu']:.4f}")
+
+
     # ---------------- Q6 ----------------
     print("\n" + "-" * 86)
     print("Q6 — Portefeuille tangent (no-short) et ratio de Sharpe")
@@ -357,15 +482,19 @@ def b1_print_sections_fr(res_b1: dict):
 
 
 def b1_plot_2_graphiques(res_b1: dict):
-    """
-    NOUVELLE version (comme demandé) :
-      - on SUPPRIME les 3 anciens plots
-      - on produit 4 figures de comparaison (Q1, Q3, Q4, Q6)
-        * Point(s) Partie A = sombre (dot ou star)
-        * Bootstrap = nuage pâle + couleur différente
-    """
+
     series = res_b1["series"]
     A = res_b1["A"]
+
+    BOOT_COLOR = "tab:blue"     # same as other bootstrap clouds
+    A_COLOR    = "tab:orange"  # Partie A reference points
+
+
+    # placements des industries (points + labels)
+    asset_sig = np.array(A["assets"]["sigma"], dtype=float)
+    asset_mu  = np.array(A["assets"]["mu"], dtype=float)
+    asset_names = A["assets"]["names"]
+    R = res_b1["R"]
 
     # Courbes A (frontières)
     q1_sig_curve = np.array(A["frontieres"]["Q1_sig"], dtype=float)
@@ -388,6 +517,42 @@ def b1_plot_2_graphiques(res_b1: dict):
     plt.show()
 
     # =========================
+    # Q2 — Avec Rf (short allowed)
+    # =========================
+    plt.figure(figsize=(10,6))
+    plt.plot(A["Q2"]["curve_sig"], A["Q2"]["curve_mu"], linewidth=2, label="Avec Rf — Partie A (locus)")
+
+    # industries placements (Partie A)
+    for i, name in enumerate(asset_names):
+        plt.scatter(asset_sig[i], asset_mu[i])
+        plt.text(asset_sig[i], asset_mu[i], name)
+
+    mask = np.isfinite(series["sig_q2_mid"]) & np.isfinite(series["mu_q2_mid"])
+    plt.scatter(
+    series["sig_q2_mid"][mask],
+    series["mu_q2_mid"][mask],
+    alpha=0.25,
+    color=BOOT_COLOR,
+    label="Bootstrap — point médian (Q2)"
+    )
+    plt.scatter(
+    A["Q2"]["mid"]["sigma"],
+    A["Q2"]["mid"]["mu"],
+    s=140,
+    marker="o",
+    color=A_COLOR,
+    label="Partie A — point médian (Q2)"
+    )
+    plt.xlabel("Risque σ")
+    plt.ylabel("Retour μ")
+    plt.xlim(0, 60)
+    plt.ylim(0, 120)
+    plt.title("Q2 — Avec actif sans risque : point médian (Partie A vs bootstrap)")
+    plt.legend()
+    plt.grid(True)
+    plt.show()
+
+    # =========================
     # Q3 — Tangency : étoile A vs nuage bootstrap
     # =========================
     plt.figure(figsize=(10, 6))
@@ -403,16 +568,18 @@ def b1_plot_2_graphiques(res_b1: dict):
         label="Bootstrap — portefeuilles tangents (Q3)"
     )
 
-    # --- zoom sur la masse centrale (95%) ---
-    x = series["sig_q3"][mask_q3]
-    y = series["mu_q3"][mask_q3]
+    # --- axes like Q1 (use Part A frontier scale, not bootstrap outliers) ---
+    x_front = q1_sig_curve[np.isfinite(q1_sig_curve)]
+    y_front = q1_mu_curve[np.isfinite(q1_mu_curve)]
 
-    plt.xlim(0, np.quantile(x, 0.95) * 1.05)
-    plt.ylim(np.quantile(y, 0.05) * 1.05, np.quantile(y, 0.95) * 1.05)
+    xmax = min(60, float(np.nanmax(q1_sig_curve) * 1.05))
+    ymax = min(120, float(np.nanmax(q1_mu_curve) * 1.05))
 
     plt.scatter(A["Q3"]["sigma"], A["Q3"]["mu"], s=220, marker="*", label="Partie A — portefeuille tangent (Q3)")
     plt.xlabel("Risque σ")
     plt.ylabel("Retour μ")
+    plt.xlim(0, xmax)
+    plt.ylim(0, ymax)
     plt.title("Q3 — Comparaison : portefeuille tangent (Partie A vs bootstrap)")
     plt.legend()
     plt.grid(True)
@@ -428,6 +595,48 @@ def b1_plot_2_graphiques(res_b1: dict):
     plt.xlabel("Risque σ")
     plt.ylabel("Retour μ")
     plt.title("Q4 — Comparaison : point médian de frontière no-short (Partie A vs bootstrap)")
+    plt.legend()
+    plt.grid(True)
+    plt.show()
+
+    # =========================
+    # Q5 — Avec rf + no-short
+    # =========================
+    plt.figure(figsize=(10,6))
+
+    # Make sure curve reaches the y-axis: prepend (0, R)
+    q5_sig = np.r_[0.0, np.array(A["Q5"]["curve_sig"], dtype=float)]
+    q5_mu  = np.r_[float(R), np.array(A["Q5"]["curve_mu"], dtype=float)]
+
+    # same dotted/dashed style as Q4
+    plt.plot(q5_sig, q5_mu, linewidth=2, linestyle="--", label="Avec Rf + no-short — Partie A")
+
+    # industries placements (Partie A)
+    for i, name in enumerate(asset_names):
+        plt.scatter(asset_sig[i], asset_mu[i])
+        plt.text(asset_sig[i], asset_mu[i], name)
+
+    mask = np.isfinite(series["sig_q5_mid"]) & np.isfinite(series["mu_q5_mid"])
+    plt.scatter(
+    series["sig_q5_mid"][mask],
+    series["mu_q5_mid"][mask],
+    alpha=0.25,
+    color=BOOT_COLOR,
+    label="Bootstrap — point médian (Q5)"
+    )
+    plt.scatter(
+    A["Q5"]["mid"]["sigma"],
+    A["Q5"]["mid"]["mu"],
+    s=140,
+    marker="o",
+    color=A_COLOR,
+    label="Partie A — point médian (Q5)"
+    )
+    plt.xlabel("Risque σ")
+    plt.ylabel("Retour μ")
+    plt.xlim(0, 60)
+    plt.ylim(0, 120)
+    plt.title("Q5 — Avec actif sans risque + no-short : point médian (Partie A vs bootstrap)")
     plt.legend()
     plt.grid(True)
     plt.show()
