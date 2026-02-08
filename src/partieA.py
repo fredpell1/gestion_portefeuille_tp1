@@ -310,7 +310,13 @@ def main():
         plt.scatter(asset_sigmas[i], mu_cf[i])
         plt.text(asset_sigmas[i], mu_cf[i], industry)
 
-    plt.plot(np.sqrt(variances_cf), returns_cf, color='red', linewidth=2, label='Frontière efficiente (Avec Vente à découvert)')
+    plt.plot(np.sqrt(variances_cf), returns_cf, color='red', linewidth=2, label='Frontière efficiente (Avec vente à découvert)')
+    plt.xlabel('Risque (Écart-type annuel)')
+    plt.ylabel('Rendement attendu annuel (%)')
+    plt.title('Locus Moyenne-Variance : Analyse comparative')
+    plt.legend()
+    plt.grid(True)
+    plt.show()
 
     weights, variances, rets, mu = efficient_frontier_closed_form(
         data_last_five_years, sigma, annualize=True
@@ -322,19 +328,19 @@ def main():
     )
 
     plt.figure(figsize=(9, 6))
-    plt.scatter(asset_sigmas, mu, marker='o')
+    plt.scatter(asset_sigmas, mu, marker='o', label='Actifs individuels')
     for i, ind in enumerate(industries):
         plt.text(asset_sigmas[i], mu[i], f" {ind}", va='center')
 
-    plt.plot(np.sqrt(variances), rets, color='red', linewidth=2, label='Sans actif sans risque')
-    plt.plot(rf_res["sigmas_line"], rf_res["mu_plus"], linestyle='--', linewidth=2, label='Avec actif sans risque (+)')
-    plt.plot(rf_res["sigmas_line"], rf_res["mu_minus"], linestyle='--', linewidth=2, label='Avec actif sans risque (-)')
-    plt.scatter([0.0], [R], marker='x')
+    plt.plot(np.sqrt(variances), rets, color='red', linewidth=2, label='Frontière sans actif sans risque')
+    plt.plot(rf_res["sigmas_line"], rf_res["mu_plus"], linestyle='--', linewidth=2, label='Frontière avec actif sans risque (+)')
+    plt.plot(rf_res["sigmas_line"], rf_res["mu_minus"], linestyle='--', linewidth=2, label='Frontière avec actif sans risque (-)')
+    plt.scatter([0.0], [R], marker='x', s=100, color='black', label='Actif sans risque (R)')
     plt.text(0.0, R, " R", va='bottom')
 
-    plt.xlabel('Risque (écart-type)')
-    plt.ylabel('Retour attendu')
-    plt.title('Mean-Variance Locus: sans / avec actif sans risque')
+    plt.xlabel('Risque (Écart-type annuel)')
+    plt.ylabel('Rendement attendu annuel (%)')
+    plt.title('Locus Moyenne-Variance : Sans / Avec actif sans risque')
     plt.grid(True)
     plt.legend()
     # print(np.sqrt(variances_cf))
@@ -347,8 +353,12 @@ def main():
         plt.scatter(asset_sigmas[i], mu_cf[i])
         plt.text(asset_sigmas[i], mu_cf[i], industry)
 
-    plt.plot(np.sqrt(variances_num), returns_num, color='blue', linewidth=2,linestyle='--', label='Frontière efficiente (Sans Vente à découvert)')
-    plt.xlabel('Risque (écart-type)')
+    plt.plot(np.sqrt(variances_num), returns_num, color='blue', linewidth=2,linestyle='--', label='Frontière efficiente (Sans vente à découvert)')
+    plt.xlabel('Risque (Écart-type annuel)')
+    plt.ylabel('Rendement attendu annuel (%)')
+    plt.title('Locus Moyenne-Variance (Sans vente à découvert)')
+    plt.legend()
+    plt.grid(True)
 
     
     # Q5 - Mean-Variance Locus (with risk-free asset, no short-selling)
@@ -361,7 +371,12 @@ def main():
     mu_q5 = np.array(rets_noshort)[:len(sig_q5)]
 
     plt.plot(sig_q5, mu_q5, linestyle='-.', linewidth=2,
-         label='Mean-Variance locus (Rf + no-short)')
+         label='Locus (Actif sans risque + sans vente à découvert)')
+    plt.xlabel('Risque (Écart-type annuel)')
+    plt.ylabel('Rendement attendu annuel (%)')
+    plt.title('Locus Moyenne-Variance avec actif sans risque (Sans vente à découvert)')
+    plt.legend()
+    plt.grid(True)
 
     # Q6 - Tangency portfolio (Rf = 2, no short-selling)
     R = 2
